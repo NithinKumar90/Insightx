@@ -96,4 +96,4 @@ Open `http://localhost:8501` in your browser.
 ---
 
 ## 👥 Team
-Built during the Payment Intelligence Hackathon 2024
+Built during the Payment Intelligence Hackathon 2026
