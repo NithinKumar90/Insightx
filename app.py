@@ -511,6 +511,15 @@ def route_query(user_query, df):
     # ── Explainability & Strategic questions → skip router, let LLM answer ──
     # These need explanation not data computation
     # ── Explain questions: run real pandas first, then LLM explains ──────────
+    # "explain why 3G higher failure" → fetch real network data first
+    if ("3g" in q or "3 g" in q) and ("why" in q or "explain" in q or "higher" in q):
+        return code(
+            "failed = df[df['transaction_status']=='FAILED'].groupby('network_type').size()",
+            "total  = df.groupby('network_type').size()",
+            "rate   = (failed / total * 100).round(2)",
+            "result = pd.DataFrame({'Network': rate.index.tolist(), 'Failed': [int(failed[n]) for n in rate.index], 'Total': [int(total[n]) for n in rate.index], 'Failure_Rate_%': rate.values.tolist()}).sort_values('Failure_Rate_%', ascending=False).reset_index(drop=True)"
+        )
+
     # Q26: "how did you determine which state" → get real state data
     if "how did you determine" in q and "state" in q:
         return code(
@@ -638,6 +647,15 @@ def route_query(user_query, df):
             "total  = df.groupby('device_type').size()",
             "rate   = (failed / total * 100).round(2)",
             "result = pd.DataFrame({'Device': rate.index.tolist(), 'Failed': [int(failed[d]) for d in rate.index], 'Total': [int(total[d]) for d in rate.index], 'Failure_Rate_%': rate.values.tolist()}).sort_values('Failure_Rate_%', ascending=False).reset_index(drop=True)"
+        )
+
+    # ── Bank highest FAILURE RATE (most common question) ────────────────────
+    if ("fail" in q or "failure" in q) and "bank" in q and not any(x in q for x in ["weekend","ios","android","type","combination","average","avg","worst","bad","most failed"]):
+        return code(
+            "failed = df[df['transaction_status']=='FAILED'].groupby('sender_bank').size()",
+            "total  = df.groupby('sender_bank').size()",
+            "rate   = (failed / total * 100).round(2)",
+            "result = pd.DataFrame({'Bank': rate.index.tolist(), 'Failed': [int(failed[b]) for b in rate.index], 'Total': [int(total[b]) for b in rate.index], 'Failure_Rate_%': rate.values.tolist()}).sort_values('Failure_Rate_%', ascending=False).reset_index(drop=True)"
         )
 
     # ── Bank most failed by COUNT ─────────────────────────────────────────────
@@ -1298,7 +1316,7 @@ result = (failed/total*100).round(2).sort_values(ascending=False).reset_index(na
         model="local-model",
         messages=messages,
         temperature=0.1,
-        max_tokens=600,
+        max_tokens=600,  # Code generation
     )
 
     code = response.choices[0].message.content.strip()
@@ -1376,7 +1394,7 @@ RULES:
         "explain how", "explain why", "explain the difference",
         "how confident", "limitations of", "in simple terms", "step by step",
         "why does education", "why does 3g", "how would you", "design a",
-        "build a risk score", "which 3 metrics", "what machine learning",
+        "build a risk score", "which 3 metrics", "what machine learning", "what ml model", "ml model would", "predict transaction", "predict failure",
         "production-ready", "scale to", "if failure rate crosses",
         "fraud patterns are shifting", "what additional data",
         "what would a production", "ceo dashboard",
@@ -1430,7 +1448,7 @@ CRITICAL RULES for the summary:
 
         content = f"""User asked: {user_query}
 
-BACKGROUND — InsightX analyses 250,000 UPI transactions:
+BACKGROUND — InsightX analyses 250,000 UPI transactions (NOT 2.5 million):
 - Overall failure rate: 4.95% | Fraud flag rate: 0.19% | Avg amount: ₹1,312
 - Transaction types: P2P (45%), P2M (30%), Bill Payment (15%), Recharge (10%)
 - Network types: 4G (60%), 5G (25%), WiFi (10%), 3G (5%)
@@ -1466,7 +1484,7 @@ Generate a clear business insight. The direct answer = the FIRST ROW of the data
         model="local-model",
         messages=messages,
         temperature=0.5,
-        max_tokens=1200 if is_multi else 500,
+        max_tokens=1200 if is_multi else (800 if is_explain_q else 500),
     )
     return response.choices[0].message.content.strip()
 
@@ -1651,7 +1669,7 @@ def detect_ambiguity(query):
         )
 
     # Too short / greeting
-    if len(q.split()) <= 2 and not any(k in q for k in ["fraud","fail","bank","state","age","device","network","p2p","p2m","amount","rate","peak","trend","month","day","hour","success","merchant","recharge","avg","amt","txn","pct","count","volume","dig","deeper","more","drill","breakdown","elaborate","compare","failure","fraud","trend","bank","state","device","network","merchant","avg","amt","txn","pct","count","volume"]):
+    if len(q.split()) <= 2 and not any(k in q for k in ["fraud","fail","bank","state","age","device","network","p2p","p2m","amount","rate","peak","trend","month","day","hour","success","merchant","recharge","avg","amt","txn","pct","count","volume","dig","deeper","more","drill","breakdown","elaborate","compare","failure","fraud","trend","bank","state","device","network","merchant","avg","amt","txn","pct","count","volume","summarise","summarize","summary","everything","discuss","discussed"]):
         return (
             "👋 Hi! I'm InsightX, your UPI payment analytics assistant. "
             "Here are some things you can ask me:\n\n"
@@ -1821,7 +1839,7 @@ def expand_query(query, history):
         return "weekend transaction analysis"
 
     # "same but only for weekends" / "now show me the same but only for weekends"
-    if ("same" in q or "now show" in q) and "weekend" in q:
+    if ("same" in q or "now show" in q or "now only" in q or "only for weekend" in q) and "weekend" in q:
         if last_topic and ("bank" in last_topic or "fail" in last_topic or "ios" in last_topic):
             return "compare failure rates by bank for weekend transactions only"
         elif last_topic:
@@ -1906,11 +1924,13 @@ def expand_query(query, history):
         "more info","give me more","elaborate more","further analysis","analyse more",
         "break it down","break down","zoom in","drill down"]):
         if last_topic:
-            # Add device/network/age breakdown context
-            if "fail" in last_topic or "failure" in last_topic:
-                return "give me a deeper breakdown of failure rates by device type network type and age group for: " + last_topic
+            # Check specific topics FIRST before generic fail check
+            if "state" in last_topic or "region" in last_topic:
+                return "show failure rate breakdown for top 10 states"
             elif "fraud" in last_topic or "flag" in last_topic:
                 return "give me a complete fraud risk profile by age group state and bank"
+            elif "fail" in last_topic or "failure" in last_topic:
+                return "give me a deeper breakdown of failure rates by device type network type and age group for: " + last_topic
             return "give me a deeper breakdown of: " + last_topic
         return query
 

@@ -72,6 +72,19 @@ streamlit run app.py
 Open `http://localhost:8501` in your browser.
 
 ---
+> **For better results**, replace the LM Studio local endpoint with OpenAI or Gemini:
+> ```python
+> # In app.py line ~35, replace:
+> client = OpenAI(base_url="http://127.0.0.1:1234/v1", api_key="lm-studio")
+> # With OpenAI:
+> client = OpenAI(api_key="YOUR_OPENAI_API_KEY")
+> # With Gemini (via OpenAI-compatible endpoint):
+> client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key="YOUR_GEMINI_API_KEY")
+> ```
+> Cloud models like GPT-4o or Gemini 1.5 Pro will give significantly better reasoning quality for strategic questions.
+
+---
+
 
 ## 📊 Dataset
 
